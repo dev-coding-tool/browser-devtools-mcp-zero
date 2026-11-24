@@ -14,6 +14,25 @@ Google Chrome의 개발자 도구 프로토콜을 사용하는 독립 프로젝�
 
 ## 전용 Chrome 시작
 
+### Chrome 설정으로 켜기
+
+Chrome 144 이상에서 사용할 수 있습니다. 아래 예시의 `--user-data-dir` 옵션으로 로그인하지 않은 전용 Chrome을 실행합니다.
+
+```powershell
+$zeroChromeData = Join-Path $env:TEMP 'chrome-devtools-mcp-zero-profile'
+& 'C:/Program Files/Google/Chrome/Application/chrome.exe' "--user-data-dir=$zeroChromeData" 'about:blank'
+$zeroChromeData
+```
+
+1. 전용 Chrome의 주소창에 `chrome://inspect/#remote-debugging`을 입력합니다.
+2. 원격 디버깅을 활성화합니다.
+3. 아래 예시대로 같은 폴더를 `CHROME_USER_DATA_DIR`에 지정하고 MCP 클라이언트에서 `connect_chrome`을 호출합니다.
+4. Chrome에 연결 승인 창이 나타나면 테스트 전용 Chrome인지 확인한 뒤 **허용**을 누릅니다.
+
+[Chrome의 연결 승인 절차](https://developer.chrome.com/docs/devtools/agents/get-started/configuration/#automatic-connection-chrome-144)
+
+### 실행 옵션으로 켜기
+
 Windows PowerShell 예시입니다. Chrome이 다른 폴더에 설치되어 있으면 실행 파일 경로를 바꿉니다.
 
 ```powershell
