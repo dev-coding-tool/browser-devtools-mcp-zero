@@ -70,7 +70,7 @@ async function initialize({ server, lines }) {
   const initialized = await readResponse(lines, 1);
   assert.equal(initialized.result?.protocolVersion, '2025-11-25');
   assert.ok(initialized.result.capabilities?.tools);
-  assert.equal(initialized.result.serverInfo?.name, 'chrome-devtools-mcp-zero');
+  assert.equal(initialized.result.serverInfo?.name, 'browser-devtools-mcp-zero');
   sendMessage(server, { method: 'notifications/initialized' });
 }
 
@@ -82,7 +82,7 @@ async function finishServer({ server, lines, closed, inputError }) {
 }
 
 test('stdio에서 MCP 초기화, 도구 목록, 오류 처리를 확인한다', { timeout: 8_000 }, async (t) => {
-  const profileDirectory = mkdtempSync(join(tmpdir(), 'chrome-devtools-mcp-zero-'));
+  const profileDirectory = mkdtempSync(join(tmpdir(), 'browser-devtools-mcp-zero-'));
   t.after(() => rmdirSync(profileDirectory));
   const session = await startServer(t, [serverPath], profileDirectory);
   const { server, lines } = session;

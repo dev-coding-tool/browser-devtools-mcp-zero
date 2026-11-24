@@ -1,8 +1,8 @@
-# chrome-devtools-mcp-zero
+# browser-devtools-mcp-zero
 
-**외부 npm 패키지 0개.** Node.js 내장 API로 Chrome DevTools Protocol(CDP)에 연결하는 단일 파일 MCP 서버입니다.
+**외부 npm 패키지 0개.** Google Chrome에서 동작을 검증한 단일 파일 DevTools MCP 서버입니다.
 
-Google Chrome의 개발자 도구 프로토콜을 사용하는 독립 프로젝트입니다.
+Node.js 내장 API로 Chrome DevTools Protocol(CDP)에 연결하는 독립 프로젝트입니다.
 
 ## 실행 환경
 
@@ -19,7 +19,7 @@ Google Chrome의 개발자 도구 프로토콜을 사용하는 독립 프로젝�
 Chrome 144 이상에서 사용할 수 있습니다. 아래 예시의 `--user-data-dir` 옵션으로 로그인하지 않은 전용 Chrome을 실행합니다.
 
 ```powershell
-$zeroChromeData = Join-Path $env:TEMP 'chrome-devtools-mcp-zero-profile'
+$zeroChromeData = Join-Path $env:TEMP 'browser-devtools-mcp-zero-profile'
 & 'C:/Program Files/Google/Chrome/Application/chrome.exe' "--user-data-dir=$zeroChromeData" 'about:blank'
 $zeroChromeData
 ```
@@ -36,7 +36,7 @@ $zeroChromeData
 Windows PowerShell 예시입니다. Chrome이 다른 폴더에 설치되어 있으면 실행 파일 경로를 바꿉니다.
 
 ```powershell
-$zeroChromeData = Join-Path $env:TEMP 'chrome-devtools-mcp-zero-profile'
+$zeroChromeData = Join-Path $env:TEMP 'browser-devtools-mcp-zero-profile'
 & 'C:/Program Files/Google/Chrome/Application/chrome.exe' `
   "--user-data-dir=$zeroChromeData" '--remote-debugging-port=0' 'about:blank'
 $zeroChromeData
@@ -51,11 +51,11 @@ JSON `mcpServers` 형식을 사용하는 클라이언트의 예시입니다. 아
 ```json
 {
   "mcpServers": {
-    "chrome-devtools-mcp-zero": {
+    "browser-devtools-mcp-zero": {
       "command": "node",
-      "args": ["C:/path/to/chrome-devtools-mcp-zero/chrome-devtools-mcp.js"],
+      "args": ["C:/path/to/browser-devtools-mcp-zero/chrome-devtools-mcp.js"],
       "env": {
-        "CHROME_USER_DATA_DIR": "C:/Users/you/AppData/Local/Temp/chrome-devtools-mcp-zero-profile"
+        "CHROME_USER_DATA_DIR": "C:/Users/you/AppData/Local/Temp/browser-devtools-mcp-zero-profile"
       }
     }
   }

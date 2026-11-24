@@ -25,7 +25,7 @@ if (typeof globalThis.WebSocket !== 'function') {
   process.exit(1);
 }
 
-const SERVER_NAME = 'chrome-devtools-mcp-zero';
+const SERVER_NAME = 'browser-devtools-mcp-zero';
 const SERVER_VERSION = '0.4.0';
 const MCP_VERSIONS = new Set(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const CONNECT_TIMEOUT_MS = 45000; // Chrome 연결 승인에 필요한 시간을 고려합니다.
