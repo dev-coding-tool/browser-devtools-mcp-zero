@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+*.log
+*.pem
+*.key
+
+DevToolsActivePort
+.chrome-profile/
+chrome-profile/
+User Data/
+.mcp.json
+.mcp.local.json
+Chrome Devtools MCP.txt
