@@ -6,6 +6,8 @@ node_modules/
 *.key
 
 DevToolsActivePort
+.browser-profile/
+browser-profile/
 .chrome-profile/
 chrome-profile/
 User Data/

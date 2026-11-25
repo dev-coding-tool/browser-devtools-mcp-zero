@@ -7,7 +7,7 @@ const { basename, join } = require('node:path');
 const { createInterface } = require('node:readline');
 const test = require('node:test');
 
-const serverPath = join(__dirname, '..', 'chrome-devtools-mcp.js');
+const serverPath = join(__dirname, '..', 'browser-devtools-mcp.js');
 
 function sendMessage(server, message) {
   server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
@@ -28,10 +28,10 @@ async function readResponse(lines, id) {
 }
 
 async function startServer(t, args, profileDirectory) {
-  assert.ok(existsSync(serverPath), '프로젝트 루트에 chrome-devtools-mcp.js가 필요합니다.');
+  assert.ok(existsSync(serverPath), '프로젝트 루트에 browser-devtools-mcp.js가 필요합니다.');
 
   const server = spawn(process.execPath, args, {
-    env: { ...process.env, CHROME_USER_DATA_DIR: profileDirectory },
+    env: { ...process.env, BROWSER_USER_DATA_DIR: profileDirectory },
     stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true,
   });
@@ -91,10 +91,16 @@ test('stdio에서 MCP 초기화, 도구 목록, 오류 처리를 확인한다', 
   sendMessage(server, { id: 2, method: 'tools/list' });
   const listed = await readResponse(lines, 2);
   assert.deepEqual(listed.result.tools.map((tool) => tool.name).sort(), [
-    'connect_chrome',
+    'connect_browser',
     'evaluate_script',
+    'list_console_messages',
+    'list_network_requests',
     'list_pages',
+    'mock_api_response',
     'navigate_page',
+    'new_page',
+    'start_console_capture',
+    'take_screenshot',
   ]);
 
   sendMessage(server, { id: 3, method: 'smoke_test/unknown' });
@@ -115,11 +121,25 @@ test('stdio에서 MCP 초기화, 도구 목록, 오류 처리를 확인한다', 
   assert.ok(disconnected.error || disconnected.result?.isError === true, '연결 전 탭 조회는 오류를 반환해야 합니다.');
   assert.equal(JSON.stringify(disconnected).includes(basename(profileDirectory)), false, '오류 응답에 로컬 프로필 경로가 포함되면 안 됩니다.');
 
+  sendMessage(server, {
+    id: 6,
+    method: 'tools/call',
+    params: { name: 'mock_api_response', arguments: { pageId: 'example', url: 'https://example.test/api', body: {} } },
+  });
+  const externalMock = await readResponse(lines, 6);
+  assert.equal(externalMock.result?.isError, true);
+  assert.match(externalMock.result.content[0].text, /루프백/);
+
+  sendMessage(server, { id: 7, method: 'tools/call', params: { name: 'take_screenshot', arguments: {} } });
+  const unnamedScreenshot = await readResponse(lines, 7);
+  assert.equal(unnamedScreenshot.result?.isError, true);
+  assert.match(unnamedScreenshot.result.content[0].text, /pageId/);
+
   await finishServer(session);
 });
 
 test('프로필 경로를 설정하지 않으면 디버깅 연결 정보를 읽지 않는다', { timeout: 8_000 }, async (t) => {
-  // 회귀가 생겨도 테스트에서 실제 Chrome 프로필을 읽지 않도록 차단합니다.
+  // 회귀가 생겨도 테스트에서 실제 브라우저 프로필을 읽지 않도록 차단합니다.
   const guard = `
     require('node:fs').promises.readFile = () => {
       process.exitCode = 1;
@@ -134,7 +154,7 @@ test('프로필 경로를 설정하지 않으면 디버깅 연결 정보를 읽�
   sendMessage(server, { id: 2, method: 'tools/call', params: { name: 'list_pages', arguments: {} } });
   const rejected = await readResponse(lines, 2);
   assert.equal(rejected.result?.isError, true);
-  assert.match(rejected.result.content[0].text, /CHROME_USER_DATA_DIR/);
+  assert.match(rejected.result.content[0].text, /BROWSER_USER_DATA_DIR/);
 
   await finishServer(session);
 });
