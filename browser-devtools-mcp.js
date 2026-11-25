@@ -5,9 +5,9 @@
  * 원격 디버깅을 활성화한 Chrome 또는 Edge를 사용합니다.
  * 연결 승인 요청이 표시되면 브라우저에서 승인해야 합니다.
  *
- * BROWSER_CHROME_USER_DATA_DIR 및 BROWSER_EDGE_USER_DATA_DIR로 전용 데이터 폴더를 지정합니다.
+ * browser로 Chrome 또는 Edge를 선택하면 해당 브라우저의 기본 사용자 데이터를 사용합니다.
+ * BROWSER_CHROME_USER_DATA_DIR 및 BROWSER_EDGE_USER_DATA_DIR로 다른 데이터 폴더도 지정할 수 있습니다.
  * 단일 기존 브라우저에는 BROWSER_USER_DATA_DIR 설정도 사용할 수 있습니다.
- * 브라우저별 경로가 지정되면 선택한 브라우저를 전용 프로필로 자동 실행할 수 있습니다.
  * connect_browser의 normal 모드는 기존 일반 탭을 사용합니다.
  * incognito 모드는 기존 시크릿 탭이 CDP에서 식별되는 경우에만 연결합니다.
  * new_page는 일반 프로필에 새 탭을 엽니다.
@@ -36,8 +36,8 @@ const CONNECT_TIMEOUT_MS = 45000; // 브라우저 연결 승인에 필요한 시
 const COMMAND_TIMEOUT_MS = 20000;
 
 const BROWSER_SETTINGS = {
-  chrome: { profile: 'BROWSER_CHROME_USER_DATA_DIR', executable: 'BROWSER_CHROME_EXECUTABLE' },
-  edge: { profile: 'BROWSER_EDGE_USER_DATA_DIR', executable: 'BROWSER_EDGE_EXECUTABLE' },
+  chrome: { profile: 'BROWSER_CHROME_USER_DATA_DIR', executable: 'BROWSER_CHROME_EXECUTABLE', inspectUrl: 'chrome://inspect/#remote-debugging' },
+  edge: { profile: 'BROWSER_EDGE_USER_DATA_DIR', executable: 'BROWSER_EDGE_EXECUTABLE', inspectUrl: 'edge://inspect' },
 };
 const browserStates = new Map();
 let activeBrowser = null;
@@ -92,40 +92,64 @@ function stateFor(browser) {
   let state = browserStates.get(browser);
   if (state) return state;
   const key = BROWSER_SETTINGS[browser]?.profile || 'BROWSER_USER_DATA_DIR';
-  const directory = setting(key);
-  if (!directory?.trim()) throw new Error(`${key}에 연결할 브라우저 사용자 데이터 폴더를 지정하세요.`);
+  const configured = setting(key);
+  const directory = configured?.trim() ? configured
+    : browser === 'default' ? undefined : standardDataDirs(browser)[0];
+  if (!directory) throw new Error(`browser에 chrome 또는 edge를 선택하거나 ${key}에 사용자 데이터 폴더를 지정하세요.`);
   const folder = profilePath(directory);
+  let useApproval = false;
   if (browser !== 'default') {
-    const other = setting(BROWSER_SETTINGS[browser === 'chrome' ? 'edge' : 'chrome'].profile);
-    if (other?.trim() && sameProfile(folder, profilePath(other))) {
-      throw new Error('Chrome과 Edge는 서로 다른 전용 사용자 데이터 폴더를 지정하세요.');
+    const otherBrowser = browser === 'chrome' ? 'edge' : 'chrome';
+    const other = setting(BROWSER_SETTINGS[otherBrowser].profile);
+    if (isStandardDataDir(otherBrowser, folder) ||
+        (other?.trim() && sameProfile(folder, profilePath(other)))) {
+      throw new Error('Chrome과 Edge는 서로 다른 사용자 데이터 폴더를 사용합니다.');
     }
+    useApproval = !configured?.trim() || isStandardDataDir(browser, folder);
   }
   state = {
-    browser, folder, key, client: null, connecting: null,
+    browser, folder, key, useApproval, client: null, connecting: null,
     mode: 'normal', normalContextId: null, contextId: null, activities: new Map(),
   };
   browserStates.set(browser, state);
   return state;
 }
 
-function standardDataDirs() {
+function standardDataDirs(browser) {
   if (process.platform === 'win32') {
-    const root = process.env.LOCALAPPDATA;
-    if (!root) return [];
-    return ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Dev', 'Google/Chrome SxS',
-      'Microsoft/Edge', 'Microsoft/Edge Beta', 'Microsoft/Edge Dev', 'Microsoft/Edge SxS']
-      .map((prefix) => path.join(root, prefix, 'User Data'));
+    const root = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const channels = browser === 'chrome'
+      ? ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Dev', 'Google/Chrome SxS']
+      : ['Microsoft/Edge', 'Microsoft/Edge Beta', 'Microsoft/Edge Dev', 'Microsoft/Edge SxS'];
+    return channels.map((channel) => path.join(root, channel, 'User Data'));
   }
   if (process.platform === 'darwin') {
     const root = path.join(os.homedir(), 'Library', 'Application Support');
-    return ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Dev', 'Google/Chrome Canary',
-      'Microsoft Edge', 'Microsoft Edge Beta', 'Microsoft Edge Dev', 'Microsoft Edge Canary']
-      .map((prefix) => path.join(root, prefix));
+    const channels = browser === 'chrome'
+      ? ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Dev', 'Google/Chrome Canary']
+      : ['Microsoft Edge', 'Microsoft Edge Beta', 'Microsoft Edge Dev', 'Microsoft Edge Canary'];
+    return channels.map((channel) => path.join(root, channel));
   }
-  const root = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return ['google-chrome', 'google-chrome-beta', 'google-chrome-unstable', 'microsoft-edge',
-    'microsoft-edge-beta', 'microsoft-edge-dev'].map((prefix) => path.join(root, prefix));
+  if (process.platform === 'linux') {
+    const root = (browser === 'chrome' && process.env.CHROME_CONFIG_HOME) ||
+      process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    const channels = browser === 'chrome'
+      ? ['google-chrome', 'google-chrome-beta', 'google-chrome-unstable']
+      : ['microsoft-edge', 'microsoft-edge-beta', 'microsoft-edge-dev'];
+    return channels.map((channel) => path.join(root, channel));
+  }
+  return [];
+}
+
+function isStandardDataDir(browser, folder) {
+  return standardDataDirs(browser).some((candidate) => sameProfile(folder, candidate) ||
+    (fs.existsSync(candidate) && sameProfile(folder, profilePath(candidate))));
+}
+
+function inspectHelp(browser) {
+  return browser === 'chrome'
+    ? 'Chrome의 chrome://inspect/#remote-debugging에서 원격 디버깅을 켠 뒤 다시 호출하세요.'
+    : 'Edge의 edge://inspect에서 Remote debugging을 선택하고 원격 디버깅을 켠 뒤 다시 호출하세요.';
 }
 
 function browserExecutable(browser) {
@@ -173,21 +197,17 @@ async function endpointFor(state) {
   }
   if (endpoint && (state.browser === 'default' || await localPortOpen(endpoint.port))) return endpoint;
 
-  const canonicalFolder = profilePath(state.folder);
-  if (standardDataDirs().some((candidate) => sameProfile(canonicalFolder, candidate) ||
-    (fs.existsSync(candidate) && sameProfile(canonicalFolder, profilePath(candidate))))) {
-    throw new Error('자동 실행에는 별도의 전용 사용자 데이터 폴더를 지정하세요.');
-  }
   const binary = browserExecutable(state.browser);
+  const profile = `--user-data-dir=${state.folder}`;
+  const args = state.useApproval
+    ? [profile, BROWSER_SETTINGS[state.browser].inspectUrl]
+    : [profile, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', 'about:blank'];
   let child;
   try {
-    child = spawn(binary, [
-      `--user-data-dir=${state.folder}`, '--remote-debugging-port=0',
-      '--no-first-run', '--no-default-browser-check', 'about:blank',
-    ], { detached: true, stdio: 'ignore', windowsHide: true });
+    child = spawn(binary, args, { detached: true, stdio: 'ignore', windowsHide: true });
     await once(child, 'spawn');
   } catch {
-    throw new Error('전용 브라우저를 실행하지 못했습니다.');
+    throw new Error('브라우저를 실행하지 못했습니다.');
   }
   child.unref();
 
@@ -201,7 +221,8 @@ async function endpointFor(state) {
     }
     await delay(100);
   }
-  throw new Error('전용 브라우저의 원격 디버깅을 열지 못했습니다. 같은 폴더를 사용 중인 브라우저를 확인하세요.');
+  if (state.useApproval) throw new Error(inspectHelp(state.browser));
+  throw new Error('브라우저의 원격 디버깅을 열지 못했습니다. 같은 폴더를 사용 중인 브라우저를 확인하세요.');
 }
 
 async function readActiveEndpoint(state) {
@@ -828,7 +849,7 @@ async function mockApiResponse({ pageId, url, status = 200, body, browser } = {}
 const tools = [
   {
     name: 'connect_browser',
-    description: '로컬 Chrome 또는 Edge의 기존 탭에 연결합니다. 설정한 전용 브라우저가 꺼져 있으면 시작합니다. normal은 일반 탭, incognito는 기존 비공개 탭을 대상으로 합니다. 자동 구분이 어려우면 pageId로 지정할 수 있습니다.',
+    description: '로컬 Chrome 또는 Edge의 기존 탭에 연결합니다. 선택한 브라우저에 연결할 수 없으면 브라우저를 시작합니다. 기본 프로필은 브라우저의 원격 디버깅 설정과 연결 승인을 사용합니다. normal은 일반 탭, incognito는 기존 비공개 탭을 대상으로 합니다. 자동 구분이 어려우면 pageId로 지정할 수 있습니다.',
     inputSchema: {
       type: 'object', properties: {
         mode: { type: 'string', enum: ['normal', 'incognito'], default: 'normal',

@@ -11,74 +11,38 @@ Node.js 내장 API로 Chrome DevTools Protocol(CDP)에 연결하는 독립 프�
 ## 실행 환경
 
 - Node.js 내장 `WebSocket`이 필요합니다. 이 API는 Node.js 22.4.0에서 안정화되었습니다. [Node.js WebSocket 문서](https://nodejs.org/download/release/v22.4.0/docs/api/globals.html#class-websocket)
-- 로컬 Chrome 또는 Edge와 로그인하지 않은 전용 사용자 데이터 폴더가 필요합니다.
+- 로컬 Chrome 또는 Edge와 원격 디버깅을 활성화한 브라우저 프로필이 필요합니다.
 - MCP 클라이언트는 로컬 프로세스를 `stdio`로 실행할 수 있어야 합니다.
 
 Windows와 Node.js 24.19.0에서 Chrome 157.0.8103.51, Edge 158.0.4370.33의 전용 일반 프로필로 검증했습니다.
 
-## Chrome과 Edge 선택
+## Chrome과 Edge의 기존 프로필 사용
 
-`browser-devtools-mcp.js`와 같은 폴더에 `.env.local`을 만들고 전용 데이터 경로를 적습니다. MCP 클라이언트의 환경변수 설정에도 같은 이름을 사용할 수 있으며, 환경변수 값이 파일 값보다 우선합니다.
+MCP를 한 번 등록한 뒤 `connect_browser`나 `new_page`에서 `browser: "chrome"` 또는 `browser: "edge"`를 선택합니다. 경로 설정이 비어 있으면 브라우저의 기본 사용자 데이터 폴더를 사용합니다.
 
-```dotenv
-BROWSER_CHROME_USER_DATA_DIR="C:/mcp/chrome-test"
-BROWSER_EDGE_USER_DATA_DIR="C:/mcp/edge-test"
-```
+Windows 안정 버전의 기본 폴더는 다음과 같습니다.
 
-`connect_browser` 또는 `new_page`에서 `browser: "chrome"`이나 `browser: "edge"`를 지정합니다. 브라우저가 꺼져 있으면 지정한 전용 폴더와 원격 디버깅을 사용해 실행합니다. Windows 기본 설치 경로에서 실행 파일을 찾으며, 다른 경로에 설치했다면 `BROWSER_CHROME_EXECUTABLE` 또는 `BROWSER_EDGE_EXECUTABLE`에 실행 파일의 절대 경로를 지정합니다.
+- Chrome `%LOCALAPPDATA%\Google\Chrome\User Data`
+- Edge `%LOCALAPPDATA%\Microsoft\Edge\User Data`
 
-예를 들어 `new_page`에 `{"browser":"edge","url":"about:blank"}`를 전달하면 Edge에 새 탭을 엽니다. `connect_browser` 또는 `new_page`로 선택한 브라우저가 다음 호출의 기본값입니다. 다른 도구에서도 `browser`를 지정해 대상을 선택할 수 있습니다.
+예를 들어 `new_page`에 `{"browser":"edge","url":"about:blank"}`를 전달하면 Edge에서 새 탭을 엽니다. 마지막으로 연결하거나 탭을 연 브라우저가 다음 호출의 기본값입니다. 다른 도구에서도 `browser`를 지정해 대상을 선택할 수 있습니다.
 
-기존 `BROWSER_USER_DATA_DIR` 설정은 실행 중인 브라우저 한 개에 연결하는 데 사용할 수 있습니다.
+### 기존 프로필에서 원격 디버깅 켜기
 
-## 브라우저를 직접 실행하는 방법
+- **Chrome 144 이상** `chrome://inspect/#remote-debugging`을 열고 원격 디버깅을 활성화합니다. [Chrome 연결 승인 안내](https://developer.chrome.com/docs/devtools/agents/get-started/configuration/#automatic-connection-chrome-144)
+- **Microsoft Edge** `edge://inspect`를 열고 **Remote debugging**에서 원격 디버깅을 활성화합니다. [Edge 연결 안내](https://learn.microsoft.com/en-us/microsoft-edge/web-ai/devtools-mcp-server#option-b-use-edgeinspect-to-enable-remote-debugging)
 
-### Chrome 설정으로 켜기
+연결할 수 없으면 MCP가 기존 프로필로 브라우저의 디버깅 설정 화면을 엽니다. 원격 디버깅을 켠 뒤 다시 호출하고, 브라우저에 연결 승인 창이 표시되면 **허용**을 누릅니다.
 
-Chrome 144 이상에서 사용할 수 있습니다. 아래 예시의 `--user-data-dir` 옵션으로 로그인하지 않은 전용 Chrome을 실행합니다.
+### 다른 데이터 폴더를 쓰는 경우
 
-```powershell
-$zeroBrowserData = Join-Path $env:TEMP 'browser-devtools-mcp-zero-profile'
-& 'C:/Program Files/Google/Chrome/Application/chrome.exe' "--user-data-dir=$zeroBrowserData" 'about:blank'
-$zeroBrowserData
-```
+기존에 기본 위치 외의 폴더를 사용 중이라면 `browser-devtools-mcp.js` 옆의 `.env.local` 또는 MCP 환경변수에 `BROWSER_CHROME_USER_DATA_DIR`이나 `BROWSER_EDGE_USER_DATA_DIR`을 지정할 수 있습니다. 환경변수 값이 파일 값보다 우선합니다. 이전에 테스트 폴더 경로를 등록했다면 해당 값을 제거하면 기본 폴더를 사용합니다.
 
-1. 전용 Chrome의 주소창에 `chrome://inspect/#remote-debugging`을 입력합니다.
-2. 원격 디버깅을 활성화합니다.
-3. 아래 예시대로 같은 폴더를 `BROWSER_CHROME_USER_DATA_DIR`에 지정하고 `connect_browser`에서 `browser: "chrome"`을 선택합니다.
-4. Chrome에 연결 승인 창이 나타나면 테스트 전용 Chrome인지 확인한 뒤 **허용**을 누릅니다.
-
-[Chrome의 연결 승인 절차](https://developer.chrome.com/docs/devtools/agents/get-started/configuration/#automatic-connection-chrome-144)
-
-### Chrome 실행 옵션으로 켜기
-
-Windows PowerShell 예시입니다. Chrome이 다른 폴더에 설치되어 있으면 실행 파일 경로를 바꿉니다.
-
-```powershell
-$zeroBrowserData = Join-Path $env:TEMP 'browser-devtools-mcp-zero-profile'
-& 'C:/Program Files/Google/Chrome/Application/chrome.exe' `
-  "--user-data-dir=$zeroBrowserData" '--remote-debugging-port=0' 'about:blank'
-$zeroBrowserData
-```
-
-Chrome이 전용 폴더에 만든 `DevToolsActivePort`를 서버가 읽고 `127.0.0.1`로 연결합니다. Chrome 실행과 종료는 사용자가 관리합니다. [Chrome 원격 디버깅 안내](https://developer.chrome.com/blog/remote-debugging-port)
-
-### Edge 실행 옵션으로 켜기
-
-Windows PowerShell에서 로그인하지 않은 전용 Edge를 실행합니다. Edge 설치 경로가 다르면 실행 파일 경로를 바꿉니다.
-
-```powershell
-$zeroBrowserData = Join-Path $env:TEMP 'browser-devtools-mcp-zero-edge-profile'
-& 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' `
-  "--user-data-dir=$zeroBrowserData" '--remote-debugging-port=0' 'about:blank'
-$zeroBrowserData
-```
-
-실행 결과에 나온 폴더 경로를 `BROWSER_EDGE_USER_DATA_DIR`에 지정한 뒤 `connect_browser`에서 `browser: "edge"`를 선택합니다. 서버가 이 폴더의 `DevToolsActivePort`를 읽어 `127.0.0.1`로 연결합니다. [Microsoft Edge 원격 디버깅 안내](https://learn.microsoft.com/en-us/microsoft-edge/devtools/protocol/#using-the-devtools-protocol)
+브라우저 실행 파일을 Windows 기본 설치 경로에서 찾을 수 없으면 `BROWSER_CHROME_EXECUTABLE` 또는 `BROWSER_EDGE_EXECUTABLE`에 실행 파일의 절대 경로를 지정합니다. 기존 `BROWSER_USER_DATA_DIR` 설정은 실행 중인 브라우저 한 개에 연결하는 데 사용할 수 있습니다.
 
 ## MCP 등록
 
-JSON `mcpServers` 형식을 사용하는 클라이언트의 등록 예시입니다. 실행 파일 경로를 실제 경로로 바꾸고, 브라우저별 데이터 폴더는 위의 `.env.local`에 지정합니다. MCP 항목 하나로 Chrome과 Edge를 선택할 수 있습니다.
+JSON `mcpServers` 형식을 사용하는 클라이언트의 등록 예시입니다. 실행 파일 경로를 실제 경로로 바꿉니다. 기본 프로필을 사용할 때는 사용자 데이터 폴더를 별도로 입력할 필요가 없습니다. MCP 항목 하나로 Chrome과 Edge를 선택할 수 있습니다.
 
 ```json
 {
@@ -95,7 +59,7 @@ JSON `mcpServers` 형식을 사용하는 클라이언트의 등록 예시입니�
 
 | 도구 | 기능 |
 | --- | --- |
-| `connect_browser` | `browser`로 Chrome 또는 Edge를 선택하고 기존 탭에 연결합니다. 전용 브라우저가 꺼져 있으면 시작합니다. `mode` 기본값은 `normal`입니다. |
+| `connect_browser` | `browser`로 Chrome 또는 Edge를 선택하고 기존 탭에 연결합니다. 필요하면 기존 프로필로 브라우저를 시작합니다. `mode` 기본값은 `normal`입니다. |
 | `list_pages` | 선택한 컨텍스트의 탭과 URL을 조회합니다. `scope=all`은 브라우저가 CDP에 노출한 전체 탭을 조회합니다. |
 | `navigate_page` | 선택한 탭을 `http:`, `https:` 또는 `about:blank` URL로 이동합니다. |
 | `evaluate_script` | 선택한 탭에서 JavaScript를 실행하고 결과를 반환합니다. |
@@ -121,7 +85,7 @@ API 모의 응답에는 현재 탭과 같은 오리진의 `127.0.0.1` 또는 `[:
 
 ## 연결 권한
 
-연결을 허용한 MCP 클라이언트는 해당 탭을 읽거나 변경할 수 있습니다. 탭 주소와 스크립트 결과, 조회한 로그와 화면은 MCP 클라이언트에 전달되며, 클라이언트 설정에 따라 외부 모델에도 전달될 수 있습니다. 서버는 지정한 전용 사용자 데이터 폴더의 디버깅 연결 정보를 읽습니다. 위 예시처럼 로그인하지 않은 전용 폴더를 지정하고 로컬 테스트 페이지에서 시작하세요. [Chrome 디버깅 연결 안내](https://developer.chrome.com/docs/devtools/agents/get-started/configuration/)
+연결을 허용한 MCP 클라이언트는 해당 탭을 읽거나 변경할 수 있습니다. 탭 주소와 스크립트 결과, 조회한 로그와 화면은 MCP 클라이언트에 전달되며, 클라이언트 설정에 따라 외부 모델에도 전달될 수 있습니다. 서버는 선택한 사용자 데이터 폴더의 디버깅 연결 정보를 읽습니다. 기존 프로필을 연결할 때는 로그인한 탭에도 에이전트가 접근할 수 있으므로, 신뢰하는 MCP 클라이언트에서 연결을 승인하세요. [Chrome 디버깅 연결 안내](https://developer.chrome.com/docs/devtools/agents/get-started/configuration/)
 
 ## 확인 방법
 

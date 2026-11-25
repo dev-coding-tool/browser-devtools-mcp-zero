@@ -200,3 +200,55 @@ test('한 서버에서 브라우저별 경로를 선택하고 환경변수가 �
   }
   await finishServer(session);
 });
+
+test('기본 프로필은 브라우저 설정 화면을 열고 디버깅 플래그를 넘기지 않는다', {
+  timeout: 8_000,
+  skip: !['win32', 'darwin', 'linux'].includes(process.platform),
+}, async (t) => {
+  const { homedir } = require('node:os');
+  let chrome;
+  let edge;
+  if (process.platform === 'win32') {
+    const root = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');
+    chrome = join(root, 'Google', 'Chrome', 'User Data');
+    edge = join(root, 'Microsoft', 'Edge', 'User Data');
+  } else if (process.platform === 'darwin') {
+    const root = join(homedir(), 'Library', 'Application Support');
+    chrome = join(root, 'Google', 'Chrome');
+    edge = join(root, 'Microsoft Edge');
+  } else {
+    const root = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+    chrome = join(process.env.CHROME_CONFIG_HOME || root, 'google-chrome');
+    edge = join(root, 'microsoft-edge');
+  }
+  const expected = [
+    { folder: chrome, inspect: 'chrome://inspect/#remote-debugging' },
+    { folder: edge, inspect: 'edge://inspect' },
+  ];
+  const guard = 'const expected = ' + JSON.stringify(expected) + '; ' +
+    "const fs = require('node:fs'); const path = require('node:path'); let i = 0; " +
+    'const realpath = fs.realpathSync; ' +
+    'fs.realpathSync = (folder, ...rest) => expected.some((entry) => entry.folder === folder) ? folder : realpath(folder, ...rest); ' +
+    'fs.promises.readFile = async (file) => { ' +
+    "if (file !== path.join(expected[i].folder, 'DevToolsActivePort')) process.exitCode = 1; " +
+    "throw Object.assign(new Error('Fixture only'), { code: 'ENOENT' }); }; " +
+    "require('node:child_process').spawn = (binary, args) => { " +
+    "const target = expected[i++]; " +
+    "if (binary !== process.execPath || args.length !== 2 || args[0] !== '--user-data-dir=' + target.folder || args[1] !== target.inspect) process.exitCode = 1; " +
+    "throw new Error('Fixture only'); }; " +
+    "process.on('exit', () => { if (i !== expected.length) process.exitCode = 1; }); " +
+    'require(process.argv[1]);';
+  const session = await startServer(t, ['-e', guard, serverPath], '', {
+    BROWSER_CHROME_EXECUTABLE: process.execPath,
+    BROWSER_EDGE_EXECUTABLE: process.execPath,
+  });
+  const { server, lines } = session;
+  await initialize(session);
+  for (const [id, browser] of [[2, 'chrome'], [3, 'edge']]) {
+    sendMessage(server, { id, method: 'tools/call', params: { name: 'connect_browser', arguments: { browser } } });
+    const result = await readResponse(lines, id);
+    assert.equal(result.result?.isError, true);
+    assert.match(result.result.content[0].text, /브라우저를 실행하지 못했습니다/);
+  }
+  await finishServer(session);
+});
