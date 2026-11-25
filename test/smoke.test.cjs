@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { existsSync, mkdtempSync, rmdirSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { basename, join } = require('node:path');
 const { createInterface } = require('node:readline');
@@ -27,11 +27,11 @@ async function readResponse(lines, id) {
   return response;
 }
 
-async function startServer(t, args, profileDirectory) {
+async function startServer(t, args, profileDirectory, settings = {}) {
   assert.ok(existsSync(serverPath), '프로젝트 루트에 browser-devtools-mcp.js가 필요합니다.');
 
   const server = spawn(process.execPath, args, {
-    env: { ...process.env, BROWSER_USER_DATA_DIR: profileDirectory },
+    env: { ...process.env, BROWSER_USER_DATA_DIR: profileDirectory, BROWSER_CHROME_USER_DATA_DIR: '', BROWSER_EDGE_USER_DATA_DIR: '', ...settings },
     stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true,
   });
@@ -156,5 +156,47 @@ test('프로필 경로를 설정하지 않으면 디버깅 연결 정보를 읽�
   assert.equal(rejected.result?.isError, true);
   assert.match(rejected.result.content[0].text, /BROWSER_USER_DATA_DIR/);
 
+  await finishServer(session);
+});
+
+test('한 서버에서 브라우저별 경로를 선택하고 환경변수가 파일보다 우선한다', { timeout: 8_000 }, async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), 'browser-devtools-mcp-zero-config-'));
+  const entry = join(fixture, 'browser-devtools-mcp.js');
+  const settingsFile = join(fixture, '.env.local');
+  t.after(() => {
+    unlinkSync(entry);
+    unlinkSync(settingsFile);
+    rmdirSync(fixture);
+  });
+  copyFileSync(serverPath, entry);
+  const chrome = join(fixture, 'chrome-fixture');
+  const edge = join(fixture, 'edge-fixture');
+  writeFileSync(settingsFile, 'BROWSER_CHROME_USER_DATA_DIR="' + chrome + '"\nBROWSER_EDGE_USER_DATA_DIR="' + join(fixture, 'unused-edge') + '"\n');
+  const fixtureCodes = {
+    [join(chrome, 'DevToolsActivePort')]: 'CHROME_FIXTURE',
+    [join(edge, 'DevToolsActivePort')]: 'EDGE_FIXTURE',
+  };
+  const guard = 'const codes = ' + JSON.stringify(fixtureCodes) + '; ' +
+    "require('node:fs').promises.readFile = async (file) => { " +
+    "throw Object.assign(new Error('Fixture only'), { code: codes[file] || 'UNEXPECTED_FIXTURE' }); }; " +
+    'require(process.argv[1]);';
+
+  const session = await startServer(t, ['-e', guard, entry], '', {
+    BROWSER_CHROME_USER_DATA_DIR: undefined,
+    BROWSER_EDGE_USER_DATA_DIR: edge,
+  });
+  const { server, lines } = session;
+  await initialize(session);
+  for (const [id, args, expected] of [
+    [2, {}, /browser를 chrome 또는 edge/],
+    [3, { browser: 'chrome' }, /CHROME_FIXTURE/],
+    [4, { browser: 'edge' }, /EDGE_FIXTURE/],
+    [5, { browser: ['edge'] }, /browser는 chrome 또는 edge/],
+  ]) {
+    sendMessage(server, { id, method: 'tools/call', params: { name: 'connect_browser', arguments: args } });
+    const response = await readResponse(lines, id);
+    assert.equal(response.result?.isError, true);
+    assert.match(response.result.content[0].text, expected);
+  }
   await finishServer(session);
 });
