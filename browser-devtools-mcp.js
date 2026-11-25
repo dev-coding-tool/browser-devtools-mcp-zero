@@ -23,6 +23,7 @@ const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
 const { parseEnv } = require('node:util');
+const { randomUUID } = require('node:crypto');
 
 if (typeof globalThis.WebSocket !== 'function') {
   process.stderr.write('Node.js 22.4.0 이상이 필요합니다(내장 WebSocket 사용).\n');
@@ -37,7 +38,7 @@ const COMMAND_TIMEOUT_MS = 20000;
 
 const BROWSER_SETTINGS = {
   chrome: { profile: 'BROWSER_CHROME_USER_DATA_DIR', executable: 'BROWSER_CHROME_EXECUTABLE', inspectUrl: 'chrome://inspect/#remote-debugging' },
-  edge: { profile: 'BROWSER_EDGE_USER_DATA_DIR', executable: 'BROWSER_EDGE_EXECUTABLE', inspectUrl: 'edge://inspect' },
+  edge: { profile: 'BROWSER_EDGE_USER_DATA_DIR', executable: 'BROWSER_EDGE_EXECUTABLE', inspectUrl: 'edge://inspect/#remote-debugging' },
 };
 const browserStates = new Map();
 let activeBrowser = null;
@@ -149,7 +150,7 @@ function isStandardDataDir(browser, folder) {
 function inspectHelp(browser) {
   return browser === 'chrome'
     ? 'Chrome의 chrome://inspect/#remote-debugging에서 원격 디버깅을 켠 뒤 다시 호출하세요.'
-    : 'Edge의 edge://inspect에서 Remote debugging을 선택하고 원격 디버깅을 켠 뒤 다시 호출하세요.';
+    : 'Edge의 edge://inspect/#remote-debugging에서 원격 디버깅을 켠 뒤 다시 호출하세요.';
 }
 
 function browserExecutable(browser) {
@@ -637,12 +638,28 @@ async function newPage({ url = 'about:blank', browser } = {}) {
   return { pageId: targetId, url };
 }
 
-async function takeScreenshot({ pageId, browser } = {}) {
+async function takeScreenshot({ pageId, browser, output = 'image' } = {}) {
   if (pageId === undefined) throw new Error('pageId가 필요합니다.');
+  if (!['image', 'file'].includes(output)) throw new Error('output은 image 또는 file이어야 합니다.');
   return withPageSession(pageId, browser, async (page) => {
     const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     if (!data || data.length > 8 * 1024 * 1024) throw new Error('스크린샷을 받지 못했거나 반환 크기 제한을 초과했습니다.');
-    return { content: [{ type: 'image', data, mimeType: 'image/png' }], isError: false };
+    const mimeType = 'image/png';
+    if (output === 'image') return { content: [{ type: 'image', data, mimeType }], isError: false };
+    const configured = setting('BROWSER_SCREENSHOT_DIR');
+    const directory = path.resolve(__dirname, configured?.trim() ? configured : 'screenshots');
+    const file = path.join(directory, `screenshot-${randomUUID()}.png`);
+    await fs.promises.mkdir(directory, { recursive: true });
+    const handle = await fs.promises.open(file, 'wx', 0o600);
+    try {
+      await handle.writeFile(Buffer.from(data, 'base64'));
+      await handle.close();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await fs.promises.unlink(file).catch(() => {});
+      throw error;
+    }
+    return toolResult({ pageId: page.pageId, path: file, mimeType });
   });
 }
 
@@ -704,6 +721,11 @@ function rememberConsole(messages, { method, params }) {
   if (messages.length > 100) messages.shift();
 }
 
+function isLoopbackApi(url) {
+  return ['http:', 'https:'].includes(url.protocol) &&
+    ['127.0.0.1', '[::1]'].includes(url.hostname) && !url.username && !url.password && !url.hash;
+}
+
 function rememberNetwork(requests, { method, params }) {
   if (method === 'Network.requestWillBeSent') {
     let url;
@@ -711,7 +733,12 @@ function rememberNetwork(requests, { method, params }) {
     if (!['http:', 'https:'].includes(url.protocol)) return;
     if (requests.has(params.requestId)) requests.delete(params.requestId);
     if (requests.size >= 100) requests.delete(requests.keys().next().value);
+    const mockUrl = params.request.method === 'GET' && ['Fetch', 'XHR'].includes(params.type) &&
+      isLoopbackApi(url) && url.href.length <= 4096 && params.documentURL?.startsWith(url.origin + '/')
+      ? url.href : null;
     requests.set(params.requestId, {
+      requestId: randomUUID(),
+      mockUrl,
       method: params.request.method.slice(0, 16),
       url: (url.origin + url.pathname).slice(0, 300),
       status: null,
@@ -779,15 +806,24 @@ async function listNetworkRequests({ pageId, limit = 20, stop = false, browser }
       ({ data }, event) => rememberNetwork(data, event), new Map(),
     );
   }
-  const requests = activity ? [...activity.data.values()].slice(-limit).map(({ startedAt, ...request }) => request) : [];
+  const origin = URL.canParse(selection.page.url) ? new URL(selection.page.url).origin : null;
+  const requests = activity ? [...activity.data.values()].slice(-limit).map(({ startedAt, mockUrl, ...request }) => ({
+    ...request,
+    mockable: Boolean(!stop && mockUrl && new URL(mockUrl).origin === origin),
+  })) : [];
   if (stop) await activity?.stop();
   return { pageId, capturing: pageActivities.has(key), requests };
 }
 
-async function mockApiResponse({ pageId, url, status = 200, body, browser } = {}) {
-  const target = validateNavigationUrl(url);
-  if (!['http:', 'https:'].includes(target.protocol) ||
-      !['127.0.0.1', '[::1]'].includes(target.hostname) || target.username || target.password || target.hash) {
+async function mockApiResponse({ pageId, url, requestId: observedId, status = 200, body, browser } = {}) {
+  if ((url === undefined) === (observedId === undefined)) {
+    throw new Error('url 또는 requestId 중 하나를 지정하세요.');
+  }
+  if (observedId !== undefined && (typeof observedId !== 'string' || !observedId.trim())) {
+    throw new Error('requestId는 네트워크 목록에서 조회한 문자열이어야 합니다.');
+  }
+  let target = url === undefined ? null : validateNavigationUrl(url);
+  if (target && !isLoopbackApi(target)) {
     throw new Error('모의 응답은 루프백 주소의 HTTP API URL만 지원합니다.');
   }
   if (!Number.isInteger(status) || status < 200 || status > 599) {
@@ -801,6 +837,13 @@ async function mockApiResponse({ pageId, url, status = 200, body, browser } = {}
   }
   const selection = await resolveRequiredPage(pageId, browser);
   const pageActivities = selection.state.activities;
+  if (observedId !== undefined) {
+    const capture = await pageActivities.get(`network:${pageId}`)?.ready;
+    const request = capture && [...capture.data.values()].find((item) => item.requestId === observedId);
+    if (!request) throw new Error('이 탭의 현재 네트워크 기록에서 requestId를 찾지 못했습니다.');
+    if (!request.mockUrl) throw new Error('모의 응답에 사용할 같은 로컬 오리진의 GET API 요청을 선택하세요.');
+    target = new URL(request.mockUrl);
+  }
   if (new URL(selection.page.url).origin !== target.origin) {
     throw new Error('선택한 탭과 모의 API는 같은 로컬 오리진이어야 합니다.');
   }
@@ -900,10 +943,11 @@ const tools = [
   },
   {
     name: 'take_screenshot',
-    description: '지정한 탭의 현재 화면을 PNG 이미지로 반환합니다.',
+    description: '지정한 탭의 현재 화면을 PNG 이미지로 반환하거나, 파일로 저장하고 경로를 반환합니다.',
     inputSchema: {
       type: 'object', properties: {
         pageId: { type: 'string', minLength: 1, description: '선택한 컨텍스트의 탭 ID' },
+        output: { type: 'string', enum: ['image', 'file'], default: 'image', description: 'file은 PNG를 로컬에 저장하고 절대 경로를 반환합니다.' },
       },
       required: ['pageId'],
       additionalProperties: false,
@@ -935,7 +979,7 @@ const tools = [
   },
   {
     name: 'list_network_requests',
-    description: '첫 호출에서 지정한 탭의 네트워크 요약 수집을 시작합니다. 이후 호출로 기록을 조회하고 stop으로 수집을 종료합니다.',
+    description: '첫 호출에서 지정한 탭의 네트워크 요약 수집을 시작합니다. 이후 조회의 requestId로 모의 응답 대상을 지정할 수 있습니다. stop으로 수집을 종료합니다.',
     inputSchema: {
       type: 'object', properties: {
         pageId: { type: 'string', minLength: 1, description: '선택한 컨텍스트의 탭 ID' },
@@ -948,15 +992,17 @@ const tools = [
   },
   {
     name: 'mock_api_response',
-    description: '같은 루프백 오리진의 정확한 API URL에 30초 동안 한 번의 GET 모의 JSON 응답을 준비합니다.',
+    description: '같은 로컬 오리진의 API URL 또는 현재 네트워크 목록의 requestId를 선택해, 다음 일치 GET 한 건에 모의 JSON 응답을 설정합니다.',
     inputSchema: {
       type: 'object', properties: {
         pageId: { type: 'string', minLength: 1, description: '선택한 컨텍스트의 탭 ID' },
-        url: { type: 'string', description: '같은 로컬 오리진의 API URL' },
+        url: { type: 'string', description: '같은 로컬 오리진의 정확한 API URL' },
+        requestId: { type: 'string', minLength: 1, description: '같은 탭의 네트워크 목록에서 반환된 모의 응답 가능 요청 ID' },
         status: { type: 'integer', minimum: 200, maximum: 599, default: 200 },
         body: { description: '반환할 JSON 값. 응답 본문을 가질 수 없는 상태 코드에서는 null.' },
       },
-      required: ['pageId', 'url', 'body'],
+      required: ['pageId', 'body'],
+      oneOf: [{ required: ['url'] }, { required: ['requestId'] }],
       additionalProperties: false,
     },
   },

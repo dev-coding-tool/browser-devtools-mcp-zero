@@ -135,6 +135,24 @@ test('stdio에서 MCP 초기화, 도구 목록, 오류 처리를 확인한다', 
   assert.equal(unnamedScreenshot.result?.isError, true);
   assert.match(unnamedScreenshot.result.content[0].text, /pageId/);
 
+  sendMessage(server, {
+    id: 8,
+    method: 'tools/call',
+    params: { name: 'take_screenshot', arguments: { pageId: 'example', output: 'other' } },
+  });
+  const unsupportedOutput = await readResponse(lines, 8);
+  assert.equal(unsupportedOutput.result?.isError, true);
+  assert.match(unsupportedOutput.result.content[0].text, /output은 image 또는 file/);
+
+  sendMessage(server, {
+    id: 9,
+    method: 'tools/call',
+    params: { name: 'mock_api_response', arguments: { pageId: 'example', url: 'http://127.0.0.1/api', requestId: 'example', body: {} } },
+  });
+  const ambiguousMock = await readResponse(lines, 9);
+  assert.equal(ambiguousMock.result?.isError, true);
+  assert.match(ambiguousMock.result.content[0].text, /url 또는 requestId 중 하나/);
+
   await finishServer(session);
 });
 
@@ -223,7 +241,7 @@ test('기본 프로필은 브라우저 설정 화면을 열고 디버깅 플래�
   }
   const expected = [
     { folder: chrome, inspect: 'chrome://inspect/#remote-debugging' },
-    { folder: edge, inspect: 'edge://inspect' },
+    { folder: edge, inspect: 'edge://inspect/#remote-debugging' },
   ];
   const guard = 'const expected = ' + JSON.stringify(expected) + '; ' +
     "const fs = require('node:fs'); const path = require('node:path'); let i = 0; " +
